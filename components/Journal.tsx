@@ -485,6 +485,8 @@ const STYLES = `
   z-index: 20;
   display: none;
   flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .journal-app .jrn-calview.open { display: flex; }
 
@@ -496,6 +498,10 @@ const STYLES = `
   padding: 24px 32px;
   border-bottom: 1px solid var(--rule);
   flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 2;
 }
 .journal-app .jrn-month { text-align: center; padding: 0 8px; }
 .journal-app .jrn-close { justify-self: end; }
@@ -562,6 +568,11 @@ const STYLES = `
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   flex: 0 0 auto;
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  margin-top: auto;
+  z-index: 2;
 }
 .journal-app .jrn-foot-user {
   color: var(--muted);
