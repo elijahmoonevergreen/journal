@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#F5F3EE" />
+<title>Journal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #F5F3EE;
+    --fg: #111111;
+    --muted: #9b958a;
+    --rule: rgba(17, 17, 17, 0.14);
+    --accent: #B14A2D;
+    --space: 8px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--fg);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: 'Nunito Sans', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 300;
+    font-size: 17px;
+    line-height: 1.55;
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  button { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+  input { background: none; border: 0; color: inherit; font: inherit; outline: none; -webkit-appearance: none; appearance: none; width: 100%; }
+
+  .label {
+    text-transform: uppercase;
+    font-weight: 500;
+    letter-spacing: 0.22em;
+    font-size: 12px;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  .icon-btn {
+    width: 48px;
+    height: 48px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg);
+    transition: opacity 140ms ease;
+  }
+  .icon-btn:hover { opacity: 0.5; }
+  .icon-btn:active { opacity: 0.35; }
+  .icon-btn svg { display: block; }
+
+  /* App shell */
+  .app {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  /* Day navigation */
+  .daynav {
+    display: grid;
+    grid-template-columns: 48px 1fr 48px 48px;
+    column-gap: 8px;
+    align-items: center;
+    padding: 24px 32px;
+    border-bottom: 1px solid var(--rule);
+    flex: 0 0 auto;
+  }
+  .daynav .date { text-align: center; padding: 0 8px; }
+  .daynav .calbtn { justify-self: end; }
+
+  /* Entries */
+  .entries-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 32px;
+  }
+  .entries-empty {
+    padding: 96px 16px;
+    color: var(--muted);
+    text-align: center;
+    font-style: italic;
+    font-size: 17px;
+  }
+  .entry {
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    column-gap: 32px;
+    padding: 24px 0;
+    border-bottom: 1px solid var(--rule);
+    align-items: baseline;
+  }
+  .entry:last-child { border-bottom: 0; }
+  .entry time {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    padding-top: 4px;
+  }
+  .entry p {
+    font-size: 17px;
+    line-height: 1.55;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+
+  /* Composer */
+  .composer {
+    border-top: 1px solid var(--rule);
+    padding: 16px 32px;
+    display: grid;
+    grid-template-columns: 1fr 48px;
+    column-gap: 16px;
+    align-items: center;
+    flex: 0 0 auto;
+    background: var(--bg);
+  }
+  .composer input {
+    font-size: 17px;
+    padding: 12px 0;
+    font-family: inherit;
+    font-weight: 300;
+  }
+  .composer input::placeholder { color: var(--muted); font-style: italic; opacity: 1; }
+  .composer .submit {
+    width: 48px;
+    height: 48px;
+    border: 1px solid var(--rule);
+    color: var(--fg);
+    transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .composer .submit:hover { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .composer .submit:disabled { opacity: 0.3; cursor: not-allowed; }
+  .composer .submit:disabled:hover { background: none; color: var(--fg); border-color: var(--rule); }
+
+  /* Calendar overlay */
+  .calview {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 10;
+    display: none;
+    flex-direction: column;
+  }
+  .calview.open { display: flex; }
+  .calview-head {
+    display: grid;
+    grid-template-columns: 48px 1fr 48px 48px;
+    column-gap: 8px;
+    align-items: center;
+    padding: 24px 32px;
+    border-bottom: 1px solid var(--rule);
+    flex: 0 0 auto;
+  }
+  .calview-head .month { text-align: center; padding: 0 8px; }
+  .calview-head .close { justify-self: end; }
+
+  .weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    padding: 24px 32px 8px;
+    flex: 0 0 auto;
+  }
+  .weekdays .wd {
+    text-align: center;
+    color: var(--muted);
+    padding: 8px 0;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+  }
+
+  .calgrid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    padding: 0 32px 32px;
+    align-content: start;
+    flex: 0 0 auto;
+  }
+  .cell {
+    aspect-ratio: 1 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg);
+    font-size: 18px;
+    font-weight: 300;
+    position: relative;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: opacity 140ms ease;
+    user-select: none;
+  }
+  .cell.empty { cursor: default; }
+  .cell:not(.empty):not(.today):hover { opacity: 0.5; }
+  .cell.today {
+    background: var(--accent);
+    color: var(--bg);
+  }
+  .cell.selected:not(.today) {
+    border-color: var(--fg);
+  }
+  .cell .dot {
+    position: absolute;
+    bottom: 18%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--fg);
+  }
+  .cell.today .dot { background: var(--bg); }
+
+  /* Mobile */
+  @media (max-width: 640px) {
+    body { font-size: 16px; }
+    .daynav {
+      padding: 16px 16px;
+      column-gap: 4px;
+      grid-template-columns: 40px 1fr 40px 40px;
+    }
+    .icon-btn { width: 40px; height: 40px; }
+    .label { font-size: 11px; letter-spacing: 0.2em; }
+
+    .entries-wrap { padding: 0 16px; }
+    .entry {
+      grid-template-columns: 56px 1fr;
+      column-gap: 16px;
+      padding: 20px 0;
+    }
+    .entry p { font-size: 16px; }
+
+    .composer {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto auto;
+      row-gap: 8px;
+      padding: 16px;
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
+    }
+    .composer input {
+      padding: 12px 0;
+      border-bottom: 1px solid var(--rule);
+      font-size: 16px;
+    }
+    .composer .submit {
+      width: 100%;
+      height: 56px;
+    }
+
+    .calview-head { padding: 16px 16px; }
+    .weekdays, .calgrid { padding-left: 8px; padding-right: 8px; }
+    .cell { font-size: 16px; }
+  }
+
+  @media (max-width: 380px) {
+    .calview-head { grid-template-columns: 40px 1fr 40px 40px; }
+  }
+
+  /* Tablet refinement */
+  @media (min-width: 641px) and (max-width: 1024px) {
+    .daynav, .composer { padding-left: 40px; padding-right: 40px; }
+    .entries-wrap { padding-left: 40px; padding-right: 40px; }
+    .calview-head, .weekdays, .calgrid { padding-left: 40px; padding-right: 40px; }
+  }
+
+  /* Wide desktop — keep readable line length */
+  @media (min-width: 1025px) {
+    .daynav, .composer, .entries-wrap, .calview-head, .weekdays, .calgrid {
+      max-width: 880px;
+      margin-left: auto;
+      margin-right: auto;
+      width: 100%;
+    }
+    .daynav, .composer, .calview-head { border-left: 1px solid var(--rule); border-right: 1px solid var(--rule); }
+    .entries-wrap { border-left: 1px solid var(--rule); border-right: 1px solid var(--rule); }
+    body { background: var(--bg); }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header class="daynav">
+      <button class="icon-btn prev-day" aria-label="Previous day" type="button">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M15 6 L 9 12 L 15 18" />
+        </svg>
+      </button>
+      <div class="date label" id="dateLabel"></div>
+      <button class="icon-btn next-day" aria-label="Next day" type="button">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 6 L 15 12 L 9 18" />
+        </svg>
+      </button>
+      <button class="icon-btn calbtn open-cal" aria-label="Open calendar" type="button">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3.5" y="5" width="17" height="15" />
+          <path d="M3.5 10 H 20.5" />
+          <path d="M8 3 V 7" />
+          <path d="M16 3 V 7" />
+        </svg>
+      </button>
+    </header>
+
+    <main class="entries-wrap" id="entriesWrap"></main>
+
+    <form class="composer" id="composer" autocomplete="off">
+      <input type="text" id="entryInput" placeholder="Write a thought&hellip;" maxlength="2000" />
+      <button type="submit" class="submit" aria-label="Add entry" id="submitBtn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" aria-hidden="true">
+          <path d="M12 5 V 19" />
+          <path d="M5 12 H 19" />
+        </svg>
+      </button>
+    </form>
+  </div>
+
+  <div class="calview" id="calview" aria-hidden="true" role="dialog" aria-label="Calendar">
+    <header class="calview-head">
+      <button class="icon-btn prev-month" aria-label="Previous month" type="button">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M15 6 L 9 12 L 15 18" />
+        </svg>
+      </button>
+      <div class="month label" id="monthLabel"></div>
+      <button class="icon-btn next-month" aria-label="Next month" type="button">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 6 L 15 12 L 9 18" />
+        </svg>
+      </button>
+      <button class="icon-btn close close-cal" aria-label="Close calendar" type="button">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 6 L 18 18" />
+          <path d="M18 6 L 6 18" />
+        </svg>
+      </button>
+    </header>
+    <div class="weekdays">
+      <div class="wd label">Mon</div>
+      <div class="wd label">Tue</div>
+      <div class="wd label">Wed</div>
+      <div class="wd label">Thu</div>
+      <div class="wd label">Fri</div>
+      <div class="wd label">Sat</div>
+      <div class="wd label">Sun</div>
+    </div>
+    <div class="calgrid" id="calgrid"></div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
+  const MONTHS = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
+
+  const state = {
+    selectedDate: todayKey(),
+    entries: [],
+    calMonth: todayKey().slice(0, 7),
+    storage: 'local'
+  };
+
+  // ---------- Date helpers ----------
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function todayKey() {
+    const d = new Date();
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+  function shiftDate(key, delta) {
+    const [y, m, d] = key.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    dt.setDate(dt.getDate() + delta);
+    return dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate());
+  }
+  function shiftMonth(monthKey, delta) {
+    const [y, m] = monthKey.split('-').map(Number);
+    const dt = new Date(y, m - 1 + delta, 1);
+    return dt.getFullYear() + '-' + pad(dt.getMonth() + 1);
+  }
+  function formatDayLabel(key) {
+    const [y, m, d] = key.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    return DAYS[dt.getDay()] + ' ' + d + ' ' + MONTHS[dt.getMonth()];
+  }
+  function formatMonthLabel(monthKey) {
+    const [y, m] = monthKey.split('-').map(Number);
+    return MONTHS[m - 1] + ' ' + y;
+  }
+
+  // ---------- Storage ----------
+  async function loadEntries() {
+    try {
+      const r = await fetch('/entries', { cache: 'no-store' });
+      if (r.ok) {
+        const data = await r.json();
+        if (Array.isArray(data)) {
+          state.storage = 'server';
+          return data;
+        }
+      }
+    } catch (e) { /* fall through */ }
+    state.storage = 'local';
+    try {
+      const raw = localStorage.getItem('journal.entries');
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveLocal() {
+    try {
+      localStorage.setItem('journal.entries', JSON.stringify(state.entries));
+    } catch (e) { /* quota etc. */ }
+  }
+
+  async function persistAdd(entry) {
+    if (state.storage === 'server') {
+      try {
+        const r = await fetch('/entries', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(entry)
+        });
+        if (!r.ok) throw new Error();
+        return;
+      } catch (e) {
+        state.storage = 'local';
+      }
+    }
+    saveLocal();
+  }
+
+  // ---------- Actions ----------
+  async function addEntry(text) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const now = new Date();
+    const entry = {
+      id: now.getTime().toString(36) + Math.random().toString(36).slice(2, 8),
+      date: state.selectedDate,
+      time: pad(now.getHours()) + ':' + pad(now.getMinutes()),
+      text: trimmed,
+      ts: now.getTime()
+    };
+    state.entries.push(entry);
+    renderEntries();
+    if (calOpen()) renderCalendar();
+    await persistAdd(entry);
+  }
+
+  function selectDate(key) {
+    state.selectedDate = key;
+    state.calMonth = key.slice(0, 7);
+    renderHeader();
+    renderEntries();
+    closeCalendar();
+  }
+
+  // ---------- Render ----------
+  function renderHeader() {
+    document.getElementById('dateLabel').textContent = formatDayLabel(state.selectedDate);
+  }
+
+  function renderEntries() {
+    const wrap = document.getElementById('entriesWrap');
+    wrap.innerHTML = '';
+    const list = state.entries
+      .filter(e => e.date === state.selectedDate)
+      .sort((a, b) => (a.time === b.time ? a.ts - b.ts : a.time.localeCompare(b.time)));
+
+    if (list.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'entries-empty';
+      empty.textContent = isToday(state.selectedDate)
+        ? 'Nothing yet today.'
+        : 'No entries on this day.';
+      wrap.appendChild(empty);
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    list.forEach(e => {
+      const article = document.createElement('article');
+      article.className = 'entry';
+      article.dataset.id = e.id;
+
+      const time = document.createElement('time');
+      time.textContent = e.time;
+
+      const p = document.createElement('p');
+      p.textContent = e.text;
+
+      article.appendChild(time);
+      article.appendChild(p);
+      frag.appendChild(article);
+    });
+    wrap.appendChild(frag);
+  }
+
+  function isToday(key) { return key === todayKey(); }
+
+  function renderCalendar() {
+    document.getElementById('monthLabel').textContent = formatMonthLabel(state.calMonth);
+    const [yy, mm] = state.calMonth.split('-').map(Number);
+    const firstDay = new Date(yy, mm - 1, 1);
+    const startWeekday = firstDay.getDay();          // 0 = Sun
+    const offset = (startWeekday + 6) % 7;           // shift so Monday is column 0
+    const daysInMonth = new Date(yy, mm, 0).getDate();
+
+    const datesWithEntries = new Set(state.entries.map(e => e.date));
+    const grid = document.getElementById('calgrid');
+    grid.innerHTML = '';
+    const today = todayKey();
+
+    for (let i = 0; i < offset; i++) {
+      const empty = document.createElement('div');
+      empty.className = 'cell empty';
+      grid.appendChild(empty);
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const key = yy + '-' + pad(mm) + '-' + pad(d);
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.key = key;
+      cell.textContent = d;
+      cell.setAttribute('role', 'button');
+      cell.setAttribute('tabindex', '0');
+      cell.setAttribute('aria-label', formatDayLabel(key));
+
+      if (key === today) cell.classList.add('today');
+      if (key === state.selectedDate) cell.classList.add('selected');
+
+      if (datesWithEntries.has(key)) {
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        cell.appendChild(dot);
+      }
+
+      cell.addEventListener('click', () => selectDate(key));
+      cell.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectDate(key); }
+      });
+
+      grid.appendChild(cell);
+    }
+  }
+
+  // ---------- Calendar visibility ----------
+  function openCalendar() {
+    state.calMonth = state.selectedDate.slice(0, 7);
+    renderCalendar();
+    const view = document.getElementById('calview');
+    view.classList.add('open');
+    view.setAttribute('aria-hidden', 'false');
+  }
+  function closeCalendar() {
+    const view = document.getElementById('calview');
+    view.classList.remove('open');
+    view.setAttribute('aria-hidden', 'true');
+  }
+  function calOpen() {
+    return document.getElementById('calview').classList.contains('open');
+  }
+
+  // ---------- Events ----------
+  function bind() {
+    document.querySelector('.prev-day').addEventListener('click', () => {
+      state.selectedDate = shiftDate(state.selectedDate, -1);
+      renderHeader();
+      renderEntries();
+    });
+    document.querySelector('.next-day').addEventListener('click', () => {
+      state.selectedDate = shiftDate(state.selectedDate, 1);
+      renderHeader();
+      renderEntries();
+    });
+    document.querySelector('.open-cal').addEventListener('click', openCalendar);
+    document.querySelector('.close-cal').addEventListener('click', closeCalendar);
+
+    document.querySelector('.prev-month').addEventListener('click', () => {
+      state.calMonth = shiftMonth(state.calMonth, -1);
+      renderCalendar();
+    });
+    document.querySelector('.next-month').addEventListener('click', () => {
+      state.calMonth = shiftMonth(state.calMonth, 1);
+      renderCalendar();
+    });
+
+    const form = document.getElementById('composer');
+    const input = document.getElementById('entryInput');
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const text = input.value;
+      if (!text.trim()) return;
+      input.value = '';
+      await addEntry(text);
+      input.focus();
+    });
+
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && calOpen()) { closeCalendar(); return; }
+      const tag = (ev.target && ev.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      if (calOpen()) return;
+      if (ev.key === 'ArrowLeft')  { state.selectedDate = shiftDate(state.selectedDate, -1); renderHeader(); renderEntries(); }
+      if (ev.key === 'ArrowRight') { state.selectedDate = shiftDate(state.selectedDate, 1);  renderHeader(); renderEntries(); }
+    });
+  }
+
+  // ---------- Init ----------
+  (async function init() {
+    state.entries = await loadEntries();
+    renderHeader();
+    renderEntries();
+    bind();
+  })();
+})();
+</script>
+</body>
+</html>
