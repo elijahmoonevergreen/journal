@@ -1,17 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Composer from './Composer';
+import SwipeRow from './SwipeRow';
+import ConfirmDialog from './ConfirmDialog';
+import { Entry, AttachmentWithUrl, StoredAttachment } from '@/lib/types';
+
+const stripUrl = (a: AttachmentWithUrl): StoredAttachment => {
+  const { url, ...rest } = a;
+  void url;
+  return rest;
+};
 
 const DAYS = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
 const MONTHS = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
-
-type Entry = {
-  id: string;
-  date: string;
-  time: string;
-  text: string;
-  ts: number;
-};
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const todayKey = () => {
@@ -38,6 +40,17 @@ const formatMonth = (mk: string) => {
   const [y, m] = mk.split('-').map(Number);
   return `${MONTHS[m - 1]} ${y}`;
 };
+const fmtDuration = (s?: number) => {
+  if (!s || s <= 0) return '';
+  const m = Math.floor(s / 60);
+  const ss = Math.floor(s % 60);
+  return `${m}:${String(ss).padStart(2, '0')}`;
+};
+const fmtBytes = (n: number) => {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+};
 
 const ChevronLeft = () => (
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -55,12 +68,6 @@ const CalendarIcon = () => (
     <path d="M3.5 10 H 20.5" />
     <path d="M8 3 V 7" />
     <path d="M16 3 V 7" />
-  </svg>
-);
-const PlusIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" aria-hidden="true">
-    <path d="M12 5 V 19" />
-    <path d="M5 12 H 19" />
   </svg>
 );
 const CloseIcon = () => (
@@ -83,20 +90,28 @@ const MoonIcon = () => (
     <path d="M21 12.8 A 9 9 0 1 1 11.2 3 A 7 7 0 0 0 21 12.8 Z" />
   </svg>
 );
+const DocIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M7 3 H 14 L 18 7 V 21 H 7 Z" />
+    <path d="M14 3 V 7 H 18" />
+    <path d="M9 12 H 16" />
+    <path d="M9 15 H 16" />
+    <path d="M9 18 H 13" />
+  </svg>
+);
 
-type Props = {
-  userLabel: string;
-};
+type Props = { userLabel: string };
 
 export default function Journal({ userLabel }: Props) {
   const today = useMemo(() => todayKey(), []);
   const [selectedDate, setSelectedDate] = useState<string>(today);
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [calOpen, setCalOpen] = useState(false);
   const [calMonth, setCalMonth] = useState<string>(today.slice(0, 7));
-  const [input, setInput] = useState('');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Entry | null>(null);
 
   useEffect(() => {
     try {
@@ -116,77 +131,105 @@ export default function Journal({ userLabel }: Props) {
     try { localStorage.setItem('journal.theme', theme); } catch {}
   }, [theme]);
 
+  const loadEntries = useCallback(async () => {
+    setLoadState('loading');
+    try {
+      const r = await fetch('/entries', { cache: 'no-store' });
+      if (r.status === 401) { window.location.reload(); return; }
+      if (!r.ok) { setLoadState('error'); return; }
+      const data = await r.json();
+      if (!Array.isArray(data)) { setLoadState('error'); return; }
+      setEntries(data);
+      setLoadState('ready');
+    } catch {
+      setLoadState('error');
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const r = await fetch('/entries', { cache: 'no-store' });
-        if (r.ok) {
-          const data = await r.json();
-          if (Array.isArray(data) && !cancelled) {
-            setEntries(data);
-          }
-        }
-      } catch {}
+      if (cancelled) return;
+      await loadEntries();
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [loadEntries]);
 
-  const addEntry = useCallback(async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
+  const addEntry = useCallback(async (html: string, attachments: AttachmentWithUrl[]) => {
     const now = new Date();
     const entry: Entry = {
       id: now.getTime().toString(36) + Math.random().toString(36).slice(2, 8),
       date: selectedDate,
       time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
-      text: trimmed,
+      text: html,
       ts: now.getTime(),
+      attachments,
     };
     setEntries(prev => [...prev, entry]);
-    try {
-      const r = await fetch('/entries', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(entry),
-      });
-      if (!r.ok) {
-        setEntries(prev => prev.filter(e => e.id !== entry.id));
-        if (r.status === 401) window.location.reload();
-      }
-    } catch {
+    const r = await fetch('/entries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: entry.id,
+        date: entry.date,
+        time: entry.time,
+        text: entry.text,
+        ts: entry.ts,
+        attachments: attachments.map(stripUrl),
+      }),
+    });
+    if (!r.ok) {
       setEntries(prev => prev.filter(e => e.id !== entry.id));
+      if (r.status === 401) { window.location.reload(); return; }
+      throw new Error('Save failed');
     }
+    const saved = (await r.json()) as Entry;
+    setEntries(prev => prev.map(e => e.id === saved.id ? saved : e));
   }, [selectedDate]);
 
-  const onSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim()) return;
-    addEntry(input);
-    setInput('');
-    inputRef.current?.focus();
-  };
+  const saveEdit = useCallback(async (id: string, html: string, attachments: AttachmentWithUrl[]) => {
+    const r = await fetch(`/entries/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: html,
+        attachments: attachments.map(stripUrl),
+      }),
+    });
+    if (!r.ok) {
+      if (r.status === 401) { window.location.reload(); return; }
+      throw new Error('Save failed');
+    }
+    setEntries(prev => prev.map(e => e.id === id
+      ? { ...e, text: html, attachments }
+      : e));
+    setEditingId(null);
+  }, []);
 
-  const onSignOut = async () => {
-    try {
-      await fetch('/api/logout', { method: 'POST' });
-    } catch {}
-    window.location.href = '/';
-  };
+  const performDelete = useCallback(async (entry: Entry) => {
+    setEntries(prev => prev.filter(e => e.id !== entry.id));
+    setPendingDelete(null);
+    const r = await fetch(`/entries/${encodeURIComponent(entry.id)}`, { method: 'DELETE' });
+    if (!r.ok) {
+      setEntries(prev => [...prev, entry].sort((a, b) => a.ts - b.ts));
+      if (r.status === 401) window.location.reload();
+    }
+  }, []);
 
   useEffect(() => {
     const handler = (ev: KeyboardEvent) => {
       if (ev.key === 'Escape' && calOpen) { setCalOpen(false); return; }
       const tag = (ev.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if ((ev.target as HTMLElement)?.isContentEditable) return;
       if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
-      if (calOpen) return;
+      if (calOpen || editingId || pendingDelete) return;
       if (ev.key === 'ArrowLeft')  setSelectedDate(d => shiftDate(d, -1));
       if (ev.key === 'ArrowRight') setSelectedDate(d => shiftDate(d, 1));
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [calOpen]);
+  }, [calOpen, editingId, pendingDelete]);
 
   const dayEntries = useMemo(() =>
     entries
@@ -216,6 +259,11 @@ export default function Journal({ userLabel }: Props) {
     setCalOpen(true);
   };
 
+  const onSignOut = async () => {
+    try { await fetch('/api/logout', { method: 'POST' }); } catch {}
+    window.location.href = '/';
+  };
+
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: STYLES }} />
@@ -235,33 +283,97 @@ export default function Journal({ userLabel }: Props) {
           </header>
 
           <main className="jrn-entries">
-            {dayEntries.length === 0 ? (
+            {loadState === 'loading' ? (
+              <div className="jrn-empty">Loading…</div>
+            ) : loadState === 'error' ? (
+              <div className="jrn-empty">
+                Couldn&apos;t load entries.
+                <button type="button" className="jrn-retry jrn-label" onClick={() => loadEntries()}>Try again</button>
+              </div>
+            ) : dayEntries.length === 0 ? (
               <div className="jrn-empty">
                 {selectedDate === today ? 'Nothing yet today.' : 'No entries on this day.'}
               </div>
             ) : (
               dayEntries.map(e => (
-                <article className="jrn-entry" key={e.id}>
-                  <time>{e.time}</time>
-                  <p>{e.text}</p>
-                </article>
+                <SwipeRow
+                  key={e.id}
+                  disabled={editingId === e.id}
+                  onEdit={() => setEditingId(e.id)}
+                  onRequestDelete={() => setPendingDelete(e)}
+                >
+                  <article className="jrn-entry">
+                    <time>{e.time}</time>
+                    <div className="jrn-entry-main">
+                      {editingId === e.id ? (
+                        <Composer
+                          variant="edit"
+                          initialHtml={e.text}
+                          initialAttachments={e.attachments}
+                          submitLabel="Save"
+                          autoFocus
+                          onSubmit={(html, atts) => saveEdit(e.id, html, atts)}
+                          onCancel={() => setEditingId(null)}
+                        />
+                      ) : (
+                        <>
+                          {e.text && (
+                            <div
+                              className="jrn-entry-body jrn-prose"
+                              dangerouslySetInnerHTML={{ __html: e.text }}
+                            />
+                          )}
+                          {e.attachments && e.attachments.length > 0 && (
+                            <div className="jrn-entry-atts">
+                              {e.attachments.map(a => {
+                                if (a.type === 'image') {
+                                  return (
+                                    <a key={a.path} href={a.url} target="_blank" rel="noopener noreferrer">
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img className="jrn-att-img" src={a.url} alt={a.name} loading="lazy" />
+                                    </a>
+                                  );
+                                }
+                                if (a.type === 'voice') {
+                                  return (
+                                    <div key={a.path} className="jrn-att-voice">
+                                      <audio controls preload="metadata" src={a.url} />
+                                      {a.duration && <span className="jrn-att-meta jrn-label">{fmtDuration(a.duration)}</span>}
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <a
+                                    key={a.path}
+                                    className="jrn-att-doc"
+                                    href={a.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    download={a.name}
+                                  >
+                                    <span className="jrn-att-doc-icon"><DocIcon /></span>
+                                    <span className="jrn-att-doc-meta">
+                                      <span className="jrn-att-doc-name">{a.name}</span>
+                                      <span className="jrn-att-doc-size jrn-label">{fmtBytes(a.size)}</span>
+                                    </span>
+                                  </a>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </article>
+                </SwipeRow>
               ))
             )}
           </main>
 
-          <form className="jrn-composer" onSubmit={onSubmit} autoComplete="off">
-            <input
-              ref={inputRef}
-              type="text"
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              placeholder="What is now? What is next?"
-              maxLength={2000}
-            />
-            <button type="submit" className="jrn-submit" aria-label="Add entry">
-              <PlusIcon />
-            </button>
-          </form>
+          <Composer
+            placeholder="What is now? What is next?"
+            onSubmit={addEntry}
+          />
         </div>
 
         <div className={`jrn-calview${calOpen ? ' open' : ''}`} aria-hidden={!calOpen} role="dialog" aria-label="Calendar">
@@ -331,6 +443,17 @@ export default function Journal({ userLabel }: Props) {
             </button>
           </div>
         </div>
+
+        {pendingDelete && (
+          <ConfirmDialog
+            title="Delete this entry?"
+            body="This can't be undone. Any attachments are removed too."
+            confirmLabel="Delete"
+            destructive
+            onConfirm={() => performDelete(pendingDelete)}
+            onCancel={() => setPendingDelete(null)}
+          />
+        )}
       </div>
     </>
   );
@@ -344,6 +467,7 @@ const STYLES = `
   --rule: rgba(17, 17, 17, 0.14);
   --accent: #B14A2D;
   --accent-fg: #F5F3EE;
+  --good: #3a8c5a;
 
   position: fixed;
   inset: 0;
@@ -368,15 +492,16 @@ const STYLES = `
   --rule: rgba(232, 228, 218, 0.14);
   --accent: #D46A45;
   --accent-fg: #181614;
+  --good: #4ea372;
 }
 
 .journal-app * { box-sizing: border-box; }
 .journal-app button {
   background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 0;
 }
-.journal-app input {
+.journal-app input, .journal-app textarea {
   background: none; border: 0; color: inherit; font: inherit; outline: none;
-  -webkit-appearance: none; appearance: none; width: 100%;
+  -webkit-appearance: none; appearance: none;
   font-family: var(--font-journal), -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   font-weight: 300;
 }
@@ -394,9 +519,11 @@ const STYLES = `
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--fg);
   transition: opacity 140ms ease;
+  flex: 0 0 auto;
 }
 .journal-app .jrn-icon:hover { opacity: 0.5; }
 .journal-app .jrn-icon:active { opacity: 0.35; }
+.journal-app .jrn-icon:disabled { opacity: 0.3; cursor: default; }
 .journal-app .jrn-icon svg { display: block; }
 
 .journal-app .jrn-shell {
@@ -422,7 +549,6 @@ const STYLES = `
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 32px;
 }
 .journal-app .jrn-empty {
   padding: 96px 16px;
@@ -430,16 +556,30 @@ const STYLES = `
   text-align: center;
   font-style: italic;
   font-size: 17px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
 }
+.journal-app .jrn-retry {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  border: 1px solid var(--rule);
+  color: var(--fg);
+  font-style: normal;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.journal-app .jrn-retry:hover { background: var(--fg); color: var(--bg); }
 .journal-app .jrn-entry {
   display: grid;
   grid-template-columns: 64px 1fr;
   column-gap: 32px;
-  padding: 24px 0;
+  padding: 24px 32px;
   border-bottom: 1px solid var(--rule);
   align-items: baseline;
+  background: var(--bg);
 }
-.journal-app .jrn-entry:last-child { border-bottom: 0; }
 .journal-app .jrn-entry time {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
@@ -447,37 +587,367 @@ const STYLES = `
   letter-spacing: 0.06em;
   padding-top: 4px;
 }
-.journal-app .jrn-entry p {
+.journal-app .jrn-entry-main { min-width: 0; }
+.journal-app .jrn-entry-body {
   font-size: 17px;
   line-height: 1.55;
   word-break: break-word;
   white-space: pre-wrap;
 }
+.journal-app .jrn-prose p { margin: 0; padding: 0; }
+.journal-app .jrn-prose p + p { margin-top: 0.5em; }
+.journal-app .jrn-prose a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.journal-app .jrn-prose a:hover { opacity: 0.7; }
+.journal-app .jrn-prose strong, .journal-app .jrn-prose b { font-weight: 600; }
+.journal-app .jrn-prose em, .journal-app .jrn-prose i { font-style: italic; }
+.journal-app .jrn-prose u { text-decoration: underline; text-underline-offset: 3px; }
 
-.journal-app .jrn-composer {
-  border-top: 1px solid var(--rule);
-  padding: 16px 32px;
-  display: grid;
-  grid-template-columns: 1fr 48px;
-  column-gap: 16px;
+.journal-app .jrn-entry-atts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+.journal-app .jrn-att-img {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  width: auto;
+  border-radius: 2px;
+  border: 1px solid var(--rule);
+}
+.journal-app .jrn-att-voice {
+  display: flex; align-items: center; gap: 12px;
+}
+.journal-app .jrn-att-voice audio {
+  flex: 1 1 auto;
+  height: 36px;
+  width: 100%;
+  max-width: 480px;
+}
+.journal-app .jrn-att-meta { color: var(--muted); }
+.journal-app .jrn-att-doc {
+  display: inline-flex;
   align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  text-decoration: none;
+  color: inherit;
+  max-width: 100%;
+  transition: background-color 140ms ease;
+}
+.journal-app .jrn-att-doc:hover { background: rgba(0,0,0,0.03); }
+.journal-app.dark .jrn-att-doc:hover { background: rgba(255,255,255,0.04); }
+.journal-app .jrn-att-doc-icon { display: inline-flex; color: var(--muted); }
+.journal-app .jrn-att-doc-meta { display: flex; flex-direction: column; min-width: 0; }
+.journal-app .jrn-att-doc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.journal-app .jrn-att-doc-size { color: var(--muted); margin-top: 2px; }
+
+/* Swipe row */
+.journal-app .jrn-swipe {
+  position: relative;
+  overflow: hidden;
+  border-bottom: 1px solid var(--rule);
+}
+.journal-app .jrn-swipe:last-child { border-bottom: 0; }
+.journal-app .jrn-swipe .jrn-entry { border-bottom: 0; }
+.journal-app .jrn-swipe-action {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 50%;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+.journal-app .jrn-swipe-edit {
+  right: 0;
+  background: var(--good);
+  color: #fff;
+  justify-content: flex-end;
+  padding-right: 32px;
+}
+.journal-app .jrn-swipe-delete {
+  left: 0;
+  background: var(--accent);
+  color: var(--accent-fg);
+  justify-content: flex-start;
+  padding-left: 32px;
+}
+.journal-app .jrn-swipe-icon { display: inline-flex; transition: transform 80ms ease; }
+.journal-app .jrn-swipe-card { position: relative; will-change: transform; }
+
+/* Composer */
+.journal-app .jrn-comp {
   flex: 0 0 auto;
   background: var(--bg);
+  border-top: 1px solid var(--rule);
+  padding: 12px 32px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
 }
-.journal-app .jrn-composer input {
+.journal-app .jrn-comp-edit {
+  border: 1px solid var(--rule);
+  padding: 12px;
+  border-top: 1px solid var(--rule);
+  margin-top: 4px;
+}
+
+.journal-app .jrn-comp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+}
+.journal-app .jrn-comp-tbtn {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--muted);
+  border-radius: 2px;
+  font-size: 15px;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.journal-app .jrn-comp-tbtn:hover { color: var(--fg); }
+.journal-app .jrn-comp-tbtn.active { color: var(--fg); background: rgba(0,0,0,0.05); }
+.journal-app.dark .jrn-comp-tbtn.active { background: rgba(255,255,255,0.06); }
+
+.journal-app .jrn-comp-linkbar {
+  display: flex; align-items: center; gap: 8px; flex: 1;
+}
+.journal-app .jrn-comp-linkbar input {
+  flex: 1 1 auto;
+  font-size: 14px;
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  color: var(--fg);
+}
+.journal-app .jrn-comp-linkbar .jrn-comp-tbtn {
+  width: auto;
+  padding: 0 12px;
+  height: 30px;
+  border: 1px solid var(--rule);
+}
+
+.journal-app .jrn-comp-body {
+  position: relative;
+  min-height: 36px;
+}
+.journal-app .jrn-comp-placeholder {
+  position: absolute;
+  top: 12px; left: 0; right: 0;
+  color: var(--muted);
+  font-style: italic;
+  pointer-events: none;
+}
+.journal-app .jrn-comp-skeleton { height: 36px; }
+.journal-app .jrn-prose {
   font-size: 17px;
-  padding: 12px 0;
+  line-height: 1.55;
 }
-.journal-app .jrn-composer input::placeholder { color: var(--muted); font-style: italic; opacity: 1; }
+.journal-app .ProseMirror {
+  outline: none;
+  padding: 12px 0;
+  min-height: 24px;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.journal-app .ProseMirror:focus { outline: none; }
+.journal-app .ProseMirror p { margin: 0; }
+.journal-app .ProseMirror p + p { margin-top: 0.5em; }
+.journal-app .jrn-comp-edit .ProseMirror { padding: 0; }
+
+.journal-app .jrn-comp-actions {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+}
+.journal-app .jrn-comp-attach-wrap { position: relative; grid-column: 1; }
+.journal-app .jrn-comp-attach-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  min-width: 180px;
+}
+.journal-app .jrn-comp-attach-opt {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  color: var(--fg);
+  white-space: nowrap;
+  transition: background-color 140ms ease;
+}
+.journal-app .jrn-comp-attach-opt:hover { background: rgba(0,0,0,0.04); }
+.journal-app.dark .jrn-comp-attach-opt:hover { background: rgba(255,255,255,0.05); }
+.journal-app .jrn-comp-cancel {
+  grid-column: 2;
+  justify-self: end;
+  padding: 8px 14px;
+  color: var(--muted);
+  transition: color 140ms ease;
+}
+.journal-app .jrn-comp-cancel:hover { color: var(--fg); }
 .journal-app .jrn-submit {
+  grid-column: 3;
   width: 48px; height: 48px;
   border: 1px solid var(--rule);
   color: var(--fg);
   display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 16px;
+  min-width: 48px;
   transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
 }
-.journal-app .jrn-submit:hover { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.journal-app .jrn-submit:disabled { opacity: 0.4; cursor: default; }
+.journal-app .jrn-submit:not(:disabled):hover { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.journal-app .jrn-submit .jrn-label { white-space: nowrap; }
 
+.journal-app .jrn-comp-error {
+  color: var(--accent);
+  font-size: 13px;
+}
+.journal-app .jrn-comp-pending { color: var(--muted); }
+
+/* Chips */
+.journal-app .jrn-comp-chips {
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.journal-app .jrn-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 8px;
+  border: 1px solid var(--rule);
+  max-width: 100%;
+  font-size: 13px;
+}
+.journal-app .jrn-chip-thumb {
+  width: 28px; height: 28px;
+  object-fit: cover;
+  border: 1px solid var(--rule);
+}
+.journal-app .jrn-chip-icon { display: inline-flex; color: var(--muted); }
+.journal-app .jrn-chip-name {
+  max-width: 200px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.journal-app .jrn-chip-size { color: var(--muted); font-size: 12px; }
+.journal-app .jrn-chip-close {
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--muted);
+  transition: color 140ms ease;
+}
+.journal-app .jrn-chip-close:hover { color: var(--fg); }
+
+/* Voice recorder */
+.journal-app .jrn-rec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--rule);
+  background: var(--bg);
+}
+.journal-app .jrn-rec-status {
+  display: inline-flex; align-items: center; gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.journal-app .jrn-rec-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: jrn-pulse 1.2s ease-in-out infinite;
+}
+@keyframes jrn-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+.journal-app .jrn-rec-time { font-size: 18px; }
+.journal-app .jrn-rec-max { color: var(--muted); }
+.journal-app .jrn-rec-label { color: var(--muted); }
+.journal-app .jrn-rec-actions { display: inline-flex; gap: 4px; }
+.journal-app .jrn-rec-btn {
+  padding: 6px 14px;
+  color: var(--muted);
+  border: 1px solid transparent;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+.journal-app .jrn-rec-btn:hover { color: var(--fg); }
+.journal-app .jrn-rec-btn:disabled { opacity: 0.5; cursor: default; }
+.journal-app .jrn-rec-stop { color: var(--fg); border-color: var(--rule); }
+.journal-app .jrn-rec-stop:hover { background: var(--fg); color: var(--bg); }
+.journal-app .jrn-rec-err { color: var(--accent); flex: 1; }
+
+/* Confirm dialog */
+.journal-app .jrn-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.journal-app .jrn-confirm {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--rule);
+  max-width: 420px;
+  width: 100%;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.journal-app .jrn-confirm-title {
+  font-size: 22px;
+  font-weight: 400;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.journal-app .jrn-confirm-body {
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+.journal-app .jrn-confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.journal-app .jrn-confirm-btn {
+  padding: 10px 18px;
+  border: 1px solid var(--rule);
+  transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.journal-app .jrn-confirm-cancel { color: var(--fg); }
+.journal-app .jrn-confirm-cancel:hover { background: rgba(0,0,0,0.04); }
+.journal-app.dark .jrn-confirm-cancel:hover { background: rgba(255,255,255,0.05); }
+.journal-app .jrn-confirm-go {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+.journal-app .jrn-confirm-go:hover { opacity: 0.85; }
+.journal-app .jrn-confirm-destroy {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+.journal-app .jrn-confirm-destroy:hover { opacity: 0.9; }
+
+/* Calendar */
 .journal-app .jrn-calview {
   position: fixed;
   inset: 0;
@@ -543,13 +1013,8 @@ const STYLES = `
 }
 .journal-app .jrn-cell.empty { cursor: default; }
 .journal-app .jrn-cell:not(.empty):not(.today):hover { opacity: 0.5; }
-.journal-app .jrn-cell.today {
-  background: var(--accent);
-  color: var(--accent-fg);
-}
-.journal-app .jrn-cell.selected:not(.today) {
-  border-color: var(--fg);
-}
+.journal-app .jrn-cell.today { background: var(--accent); color: var(--accent-fg); }
+.journal-app .jrn-cell.selected:not(.today) { border-color: var(--fg); }
 .journal-app .jrn-dot {
   position: absolute;
   bottom: 18%;
@@ -574,10 +1039,7 @@ const STYLES = `
   margin-top: auto;
   z-index: 2;
 }
-.journal-app .jrn-foot-user {
-  color: var(--muted);
-  justify-self: start;
-}
+.journal-app .jrn-foot-user { color: var(--muted); justify-self: start; }
 .journal-app .jrn-theme-toggle {
   display: inline-flex;
   align-items: center;
@@ -599,43 +1061,27 @@ const STYLES = `
 
 @media (max-width: 640px) {
   .journal-app { font-size: 16px; }
-  .journal-app .jrn-daynav {
-    padding: 16px;
-    column-gap: 4px;
-    grid-template-columns: 40px 1fr 40px 40px;
-  }
+  .journal-app .jrn-daynav { padding: 16px; column-gap: 4px; grid-template-columns: 40px 1fr 40px 40px; }
   .journal-app .jrn-icon { width: 40px; height: 40px; }
   .journal-app .jrn-label { font-size: 11px; letter-spacing: 0.2em; }
-  .journal-app .jrn-entries { padding: 0 16px; }
   .journal-app .jrn-entry {
     grid-template-columns: 56px 1fr;
     column-gap: 16px;
-    padding: 20px 0;
+    padding: 20px 16px;
   }
-  .journal-app .jrn-entry p { font-size: 16px; }
-  .journal-app .jrn-composer {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto;
-    row-gap: 8px;
-    padding: 16px;
-    padding-bottom: max(16px, env(safe-area-inset-bottom));
-  }
-  .journal-app .jrn-composer input {
-    border-bottom: 1px solid var(--rule);
-    font-size: 16px;
-  }
-  .journal-app .jrn-submit { width: 100%; height: 56px; }
+  .journal-app .jrn-entry-body { font-size: 16px; }
+  .journal-app .jrn-comp { padding: 12px 16px; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
   .journal-app .jrn-calhead { padding: 16px; grid-template-columns: 40px 1fr 40px 40px; }
-  .journal-app .jrn-weekdays,
-  .journal-app .jrn-calgrid { padding-left: 8px; padding-right: 8px; }
+  .journal-app .jrn-weekdays, .journal-app .jrn-calgrid { padding-left: 8px; padding-right: 8px; }
   .journal-app .jrn-cell { font-size: 16px; }
   .journal-app .jrn-calfoot { padding: 16px; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .journal-app .jrn-att-img { max-height: 280px; }
 }
 
 @media (min-width: 641px) and (max-width: 1024px) {
   .journal-app .jrn-daynav,
-  .journal-app .jrn-composer,
-  .journal-app .jrn-entries,
+  .journal-app .jrn-comp,
+  .journal-app .jrn-entry,
   .journal-app .jrn-calhead,
   .journal-app .jrn-weekdays,
   .journal-app .jrn-calgrid,
