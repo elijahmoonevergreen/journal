@@ -1,24 +1,21 @@
-import DOMPurify from 'isomorphic-dompurify';
+import sanitize, { IOptions } from 'sanitize-html';
 
-const ALLOWED_TAGS = ['p', 'br', 'b', 'strong', 'i', 'em', 'u', 'a'];
-const ALLOWED_ATTR = ['href', 'target', 'rel'];
+const OPTIONS: IOptions = {
+  allowedTags: ['p', 'br', 'b', 'strong', 'i', 'em', 'u', 'a'],
+  allowedAttributes: {
+    a: ['href', 'target', 'rel'],
+  },
+  allowedSchemes: ['http', 'https', 'mailto', 'tel'],
+  transformTags: {
+    a: sanitize.simpleTransform('a', {
+      target: '_blank',
+      rel: 'noopener noreferrer',
+    }),
+  },
+};
 
 export function sanitizeHtml(html: string): string {
-  const cleaned = DOMPurify.sanitize(html, {
-    ALLOWED_TAGS,
-    ALLOWED_ATTR,
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|#|\/)/i,
-  });
-  return cleaned.replace(
-    /<a\s+([^>]*?)>/gi,
-    (_match, attrs) => {
-      const cleanedAttrs = String(attrs)
-        .replace(/\s*target\s*=\s*("[^"]*"|'[^']*'|\S+)/gi, '')
-        .replace(/\s*rel\s*=\s*("[^"]*"|'[^']*'|\S+)/gi, '')
-        .trim();
-      return `<a ${cleanedAttrs} target="_blank" rel="noopener noreferrer">`;
-    },
-  );
+  return sanitize(html, OPTIONS);
 }
 
 export function isHtmlEmpty(html: string): boolean {

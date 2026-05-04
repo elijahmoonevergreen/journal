@@ -94,14 +94,20 @@ export async function GET() {
 
   if (error) {
     console.error('GET /entries select error:', error);
-    return NextResponse.json({ error: 'db error' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'db error', stage: 'select', detail: error.message, code: error.code },
+      { status: 500 },
+    );
   }
   let enriched;
   try {
     enriched = await withSignedUrls(data ?? []);
   } catch (e) {
     console.error('GET /entries withSignedUrls error:', e);
-    return NextResponse.json({ error: 'signed url error' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'signed url error', stage: 'signed_urls', detail: e instanceof Error ? e.message : String(e) },
+      { status: 500 },
+    );
   }
   return NextResponse.json(enriched, {
     headers: { 'Cache-Control': 'no-store' },
