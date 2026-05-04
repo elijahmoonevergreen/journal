@@ -102,6 +102,10 @@ export default function Composer({
   const [busy, setBusy] = useState(false);
   const [pendingUpload, setPendingUpload] = useState<AttachmentType | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isEmpty, setIsEmpty] = useState(() => {
+    const stripped = (initialHtml || '').replace(/<p>\s*<\/p>/g, '').trim();
+    return stripped.length === 0;
+  });
 
   const imageInputRef = useRef<HTMLInputElement>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
@@ -142,6 +146,8 @@ export default function Composer({
         spellcheck: 'true',
       },
     },
+    onCreate: ({ editor }) => setIsEmpty(editor.isEmpty),
+    onUpdate: ({ editor }) => setIsEmpty(editor.isEmpty),
   });
 
   useEffect(() => {
@@ -337,7 +343,7 @@ export default function Composer({
           <div className="jrn-comp-skeleton" aria-hidden="true" />
         ) : (
           <>
-            {editor.isEmpty && (
+            {isEmpty && (
               <div className="jrn-comp-placeholder" aria-hidden="true">{placeholder}</div>
             )}
             <EditorContent editor={editor} className="jrn-comp-edit" />
